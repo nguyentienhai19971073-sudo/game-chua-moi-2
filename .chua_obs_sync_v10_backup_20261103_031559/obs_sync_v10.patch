@@ -1,0 +1,356 @@
+diff --git a/server.ts b/server.ts
+--- a/server.ts
++++ b/server.ts
+@@ -3,8 +3,9 @@
+ import { createServer } from 'http';
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+ import { Server as SocketIOServer } from 'socket.io';
++import { readObsSyncSettings, writeObsSyncSettings } from './server/obsSyncStore.ts'; // CHUA_OBS_SYNC_V10
+ import { createServer as createViteServer } from 'vite';
+ import { TikTokLiveAdapter } from './server/tiktokAdapter.ts';
+ import {
+   GiftValidationError,
+@@ -103,9 +104,29 @@
+       io.emit('tiktok:status', snapshot);
+     },
+   );
+ 
+-  // Health & Server Capabilities Endpoint
++// CHUA_OBS_SYNC_V10: persist only UI/camera settings across Chrome and OBS.
++// Localhost-only writes avoid granting LAN viewers control of the LIVE overlay.
++app.get('/api/obs-sync', (_req, res) => {
++  res.json({ ok: true, snapshot: readObsSyncSettings() });
++});
++app.put('/api/obs-sync', (req, res) => {
++  const ip = req.socket.remoteAddress || '';
++  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) {
++    res.status(403).json({ ok: false, error: 'Chỉ cho phép thay đổi cấu hình từ chính MacBook.' });
++    return;
++  }
++  try {
++    const snapshot = writeObsSyncSettings(req.body);
++    io.emit('temple:obs_sync_settings', snapshot);
++    res.json({ ok: true, savedAt: snapshot.savedAt });
++  } catch (error) {
++    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'Cấu hình không hợp lệ' });
++  }
++});
++
++// Health & Server Capabilities Endpoint
+   app.get('/api/health', (_req, res) => {
+     res.json({
+       ok: true,
+       timestamp: Date.now(),
+@@ -529,8 +550,10 @@
+     socket.emit('gifts:unknown_updated', {
+       unknownGifts: giftStore.listUnknownGifts(),
+     });
+     socket.emit('xinxam:updated', fortuneStore.getSnapshot());
++    const obsSync = readObsSyncSettings();
++    if (obsSync) socket.emit('temple:obs_sync_settings', obsSync); // CHUA_OBS_SYNC_V10
+ 
+     socket.on('tiktok:connect', async (payload: { username?: string }) => {
+       await tiktokAdapter.connect(String(payload?.username || ''));
+     });
+diff --git a/server/obsSyncStore.ts b/server/obsSyncStore.ts
+new file mode 100644
+--- /dev/null
++++ b/server/obsSyncStore.ts
+@@ -0,0 +1,60 @@
++/** CHUA_OBS_SYNC_V10 — only presentation settings, never voice/API credentials. */
++import fs from 'node:fs';
++import path from 'node:path';
++import { DEFAULT_OVERLAY_SETTINGS, DEFAULT_SCENE_CALIBRATION } from '../src/types/temple.ts';
++
++export interface ObsSyncSettings {
++  overlay: Record<string, unknown>;
++  scene: Record<string, unknown>;
++  savedAt: number;
++}
++
++const FILE = path.join(process.cwd(), '.chua_obs_sync_settings.json');
++const allowedOverlay = new Set(Object.keys(DEFAULT_OVERLAY_SETTINGS).filter(k => k !== 'obsCleanView'));
++const allowedScene = new Set(Object.keys(DEFAULT_SCENE_CALIBRATION));
++
++function filterSettings(input: unknown, allowed: Set<string>, type: string): Record<string, unknown> {
++  if (!input || typeof input !== 'object' || Array.isArray(input)) {
++    throw new Error(`Thiếu cấu hình ${type} hợp lệ`);
++  }
++  const sanitized: Record<string, unknown> = {};
++  for (const [key, value] of Object.entries(input)) {
++    if (!allowed.has(key)) continue;
++    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean' && value !== null) continue;
++    if (typeof value === 'number' && !Number.isFinite(value)) continue;
++    if (typeof value === 'string' && value.length > 2048) continue;
++    sanitized[key] = value;
++  }
++  return sanitized;
++}
++
++export function readObsSyncSettings(): ObsSyncSettings | null {
++  try {
++    const raw = JSON.parse(fs.readFileSync(FILE, 'utf8')) as ObsSyncSettings;
++    if (!raw || !raw.overlay || !raw.scene || !Number.isFinite(raw.savedAt)) return null;
++    return {
++      overlay: filterSettings(raw.overlay, allowedOverlay, 'giao diện'),
++      scene: filterSettings(raw.scene, allowedScene, 'camera'),
++      savedAt: raw.savedAt,
++    };
++  } catch {
++    return null;
++  }
++}
++
++export function writeObsSyncSettings(body: unknown): ObsSyncSettings {
++  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Dữ liệu không hợp lệ');
++  const data = body as { overlay?: unknown; scene?: unknown };
++  const overlay = filterSettings(data.overlay, allowedOverlay, 'giao diện');
++  const scene = filterSettings(data.scene, allowedScene, 'camera');
++  if (Object.keys(overlay).length < 8 || Object.keys(scene).length < 5) {
++    throw new Error('Cấu hình không đầy đủ; không ghi đè');
++  }
++  const snapshot = { overlay, scene, savedAt: Date.now() };
++  const serialized = JSON.stringify(snapshot);
++  if (serialized.length > 16000) throw new Error('Cấu hình vượt giới hạn');
++  const tmp = `${FILE}.${process.pid}.tmp`;
++  fs.writeFileSync(tmp, serialized, { encoding: 'utf8', mode: 0o600 });
++  fs.renameSync(tmp, FILE);
++  return snapshot;
++}
+diff --git a/src/App.tsx b/src/App.tsx
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -2,9 +2,9 @@
+  * @license
+  * SPDX-License-Identifier: Apache-2.0
+  */
+ 
+-import { useCallback, useEffect, useState } from 'react';
++import { useCallback, useEffect, useRef, useState } from 'react';
+ import { SlidersHorizontal, X } from 'lucide-react';
+ import {
+   BuddhaModelLoadStatus,
+   DEFAULT_OVERLAY_SETTINGS,
+@@ -24,8 +24,9 @@
+   tiktokEventManager,
+ } from './systems/TikTokEventManager';
+ import { voiceManager, VoiceStateSnapshot } from './systems/VoiceManager';
+ import {
++  OVERLAY_SETTINGS_STORAGE_KEY,
+   loadPersistedOverlaySettings,
+   loadPersistedVoiceSettings,
+   savePersistedOverlaySettings,
+   savePersistedVoiceSettings,
+@@ -89,9 +90,28 @@
+     const loaded = loadPersistedSceneCalibration();
+     return setActiveSceneCalibration(loaded);
+   });
+ 
+-  const [buddhaModelStatus, setBuddhaModelStatus] = useState<BuddhaModelLoadStatus>('builtin');
++// CHUA_OBS_SYNC_V10: keep local OBS clean mode, sync only presentation and camera.
++const overlayRef = useRef(overlaySettings);
++const sceneRef = useRef(sceneCalibration);
++const isObsUrl = () => {
++  const params = new URLSearchParams(window.location.search);
++  return params.get('obs') === '1' || params.get('mode') === 'obs';
++};
++const publishObsSync = useCallback((overlay: StreamOverlaySettings, scene: SceneCalibrationSettings) => {
++  if (isObsUrl()) return;
++  // Do not send voice/API keys or data about participants.
++  void fetch('/api/obs-sync', {
++    method: 'PUT',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ overlay: { ...overlay, obsCleanView: false }, scene }),
++  }).then((res) => {
++    if (!res.ok) console.warn('[OBS Sync] Không thể lưu cấu hình chung:', res.status);
++  }).catch((err) => console.warn('[OBS Sync] Server chưa kết nối:', err));
++}, []);
++
++const [buddhaModelStatus, setBuddhaModelStatus] = useState<BuddhaModelLoadStatus>('builtin');
+   const [buddhaModelDetail, setBuddhaModelDetail] = useState(
+     'Đang sử dụng tôn tượng Đức Phật Vàng điêu khắc 3D tích hợp',
+   );
+   const [mobileAdminOpen, setMobileAdminOpen] = useState(false);
+@@ -134,9 +154,41 @@
+     const unsubLiveEvents = liveConnectionManager.onEvent((event: TikTokNormalizedEvent) => {
+       tiktokEventManager.processEvent(event);
+     });
+ 
+-    const unsubAdminCmd = liveConnectionManager.onAdminCommand((cmd) => {
++const unsubObsSync = liveConnectionManager.onObsSync((snapshot) => {
++  // Central server config wins, but ?obs=1 never loses clean LIVE mode.
++  try {
++    const preserveCleanView = isObsUrl() || overlayRef.current.obsCleanView;
++    window.localStorage.setItem(OVERLAY_SETTINGS_STORAGE_KEY, JSON.stringify({
++      ...snapshot.overlay,
++      obsCleanView: false,
++    }));
++    const remote = loadPersistedOverlaySettings(isObsUrl());
++    const nextOverlay = { ...remote, obsCleanView: preserveCleanView };
++    overlayRef.current = nextOverlay;
++    setOverlaySettings(nextOverlay);
++    tiktokEventManager.setMaxParticipants(nextOverlay.maxParticipants);
++    tiktokEventManager.setMaxConcurrentCeremonies(nextOverlay.maxConcurrentCeremonies);
++    tiktokEventManager.setEffectsEnabled(nextOverlay.effectsEnabled);
++    tiktokEventManager.setCeremonialPresentationSettings({
++      centerPanelDurationMs: nextOverlay.centerPanelDuration,
++    });
++    tiktokEventManager.setInactivitySettings({
++      enabled: nextOverlay.inactivityTimeoutEnabled,
++      timeoutSec: nextOverlay.inactivityTimeoutSec,
++      demoAccelerated: nextOverlay.demoAcceleratedTimeout,
++    });
++    const nextScene = setActiveSceneCalibration(snapshot.scene);
++    sceneRef.current = nextScene;
++    setSceneCalibration(nextScene);
++    savePersistedSceneCalibration(nextScene);
++  } catch (err) {
++    console.warn('[OBS Sync] Cấu hình đồng bộ không hợp lệ:', err);
++  }
++}); // CHUA_OBS_SYNC_V10
++
++const unsubAdminCmd = liveConnectionManager.onAdminCommand((cmd) => {
+       if (cmd.action === 'clear_participants') {
+         clearPendingDemoBatches();
+         tiktokEventManager.clearParticipants();
+       } else if (cmd.action === 'reset_seating') {
+@@ -182,8 +234,9 @@
+       unsubStatus();
+       unsubVoice();
+       unsubLiveEvents();
+       unsubAdminCmd();
++      unsubObsSync();
+       window.removeEventListener('keydown', onKeyDown);
+     };
+   }, []);
+ 
+@@ -261,8 +314,10 @@
+     savePersistedVoiceSettings(next);
+   }, []);
+ 
+   const handleUpdateOverlaySettings = useCallback((next: StreamOverlaySettings) => {
++    overlayRef.current = next;
++    publishObsSync(next, sceneRef.current);
+     setOverlaySettings(next);
+     savePersistedOverlaySettings(next);
+     tiktokEventManager.setMaxParticipants(next.maxParticipants);
+     tiktokEventManager.setMaxConcurrentCeremonies(next.maxConcurrentCeremonies);
+@@ -274,20 +329,24 @@
+       enabled: next.inactivityTimeoutEnabled,
+       timeoutSec: next.inactivityTimeoutSec,
+       demoAccelerated: next.demoAcceleratedTimeout,
+     });
+-  }, []);
++  }, [publishObsSync]);
+ 
+   const handleUpdateSceneCalibration = useCallback((next: SceneCalibrationSettings) => {
+     const applied = setActiveSceneCalibration(next);
+     setSceneCalibration(applied);
++    sceneRef.current = applied;
+     savePersistedSceneCalibration(applied);
+-  }, []);
++    publishObsSync(overlayRef.current, applied);
++  }, [publishObsSync]);
+ 
+   const handleResetSceneCalibration = useCallback(() => {
+     const fresh = resetPersistedSceneCalibration();
++    sceneRef.current = fresh;
+     setSceneCalibration(fresh);
+-  }, []);
++    publishObsSync(overlayRef.current, fresh);
++  }, [publishObsSync]);
+ 
+   const handleManualRemoveInactive = useCallback(() => {
+     return tiktokEventManager.removeInactiveParticipantsManual();
+   }, []);
+diff --git a/src/systems/LiveConnectionManager.ts b/src/systems/LiveConnectionManager.ts
+--- a/src/systems/LiveConnectionManager.ts
++++ b/src/systems/LiveConnectionManager.ts
+@@ -4,14 +4,22 @@
+   FortuneRecord,
+   GiftActionPreset,
+   GiftMapping,
+   ServerConnectionSnapshot,
++  StreamOverlaySettings,
++  SceneCalibrationSettings,
+   TikTokNormalizedEvent,
+   UnknownGiftRecord,
+   XinXamDrawResult,
+   XinXamSettings,
+ } from '../types/temple';
+ 
++export type ObsSyncSnapshot = {
++  overlay: Partial<StreamOverlaySettings>;
++  scene: Partial<SceneCalibrationSettings>;
++  savedAt: number;
++};
++type ObsSyncSubscriber = (snapshot: ObsSyncSnapshot) => void;
+ type EventSubscriber = (event: TikTokNormalizedEvent) => void;
+ type StatusSubscriber = (snapshot: ServerConnectionSnapshot) => void;
+ type AdminCmdSubscriber = (cmd: { action: string; payload?: any }) => void;
+ type GiftsUpdatedSubscriber = (payload: {
+@@ -43,8 +51,10 @@
+       openai: false,
+     },
+   };
+ 
++  private lastObsSync: ObsSyncSnapshot | null = null;
++  private obsSyncSubscribers = new Set<ObsSyncSubscriber>();
+   private eventSubscribers = new Set<EventSubscriber>();
+   private statusSubscribers = new Set<StatusSubscriber>();
+   private adminCmdSubscribers = new Set<AdminCmdSubscriber>();
+   private giftsSubscribers = new Set<GiftsUpdatedSubscriber>();
+@@ -74,8 +84,14 @@
+       for (const sub of this.eventSubscribers) {
+         sub(ev);
+       }
+     });
++
++    socket.on('temple:obs_sync_settings', (snapshot: ObsSyncSnapshot) => {
++      if (!snapshot || !snapshot.overlay || !snapshot.scene) return;
++      this.lastObsSync = snapshot;
++      for (const sub of this.obsSyncSubscribers) sub(snapshot);
++    }); // CHUA_OBS_SYNC_V10
+ 
+     socket.on('temple:admin_command', (cmd: { action: string; payload?: any }) => {
+       for (const sub of this.adminCmdSubscribers) {
+         sub(cmd);
+@@ -144,8 +160,14 @@
+       sub(this.snapshot);
+     }
+   }
+ 
++  public onObsSync(cb: ObsSyncSubscriber): () => void {
++    this.obsSyncSubscribers.add(cb);
++    if (this.lastObsSync) cb(this.lastObsSync);
++    return () => { this.obsSyncSubscribers.delete(cb); };
++  }
++
+   public onEvent(cb: EventSubscriber): () => void {
+     this.eventSubscribers.add(cb);
+     return () => this.eventSubscribers.delete(cb);
+   }
+diff --git a/src/components/ui/AdminDashboard.tsx b/src/components/ui/AdminDashboard.tsx
+--- a/src/components/ui/AdminDashboard.tsx
++++ b/src/components/ui/AdminDashboard.tsx
+@@ -3087,8 +3087,19 @@
+             6. STREAMING / OBS & GOLDEN BUDDHA GLB/GLTF ASSET CONFIGURATION TAB
+            ========================================================================== */}
+         {activeTab === 'streaming' && (
+           <div className="space-y-5 text-xs">
++            {/* CHUA_OBS_SYNC_V10: allow saving the existing Chrome settings as the server master. */}
++            <div className="rounded-xl border border-[#d4af37]/45 bg-[#25120d] p-3 space-y-2">
++              <div className="text-[#ffe082] font-semibold">Đồng bộ giao diện Chrome ↔ OBS</div>
++              <p className="text-[#e9d5b5]">Chọn cấu hình đang thấy trong Admin làm bản dùng chung. OBS sẽ nhận lại thông số bảng, chữ xu và căn chỉnh camera. OBS vẫn ẩn bảng quản trị khi dùng ?obs=1.</p>
++              <button type="button" onClick={() => {
++                onUpdateOverlaySettings({ ...overlaySettings });
++                setOverlaySavedBanner('Đã gửi cấu hình từ Chrome sang server. Kiểm tra lại OBS.');
++              }} className="rounded-lg bg-[#d4af37] px-3 py-2 text-[#1b0d08] font-bold hover:bg-[#e8c260] cursor-pointer">
++                Đồng bộ giao diện hiện tại sang OBS
++              </button>
++            </div>
+             <div className="flex items-center justify-between gap-2 rounded-xl bg-[#250c12] border border-[#d4af37]/40 p-3">
+               <div>
+                 <p className="font-semibold text-[#ffe082]">
+                   Chế độ nền hiện tại:{' '}

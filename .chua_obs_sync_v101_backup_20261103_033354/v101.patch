@@ -1,0 +1,86 @@
+diff --git a/src/components/ui/AdminDashboard.tsx b/src/components/ui/AdminDashboard.tsx
+--- a/src/components/ui/AdminDashboard.tsx
++++ b/src/components/ui/AdminDashboard.tsx
+@@ -236,6 +236,9 @@
+   );
+   const [voiceSavedBanner, setVoiceSavedBanner] = useState<string | null>(null);
+   const [overlaySavedBanner, setOverlaySavedBanner] = useState<string | null>(null);
++  // CHUA_OBS_SYNC_V101: feedback is based on the verified server response.
++  const [obsSyncMessage, setObsSyncMessage] = useState<{ ok: boolean; text: string } | null>(null);
++  const [obsSyncBusy, setObsSyncBusy] = useState(false);
+   const [calibrationSavedBanner, setCalibrationSavedBanner] = useState<string | null>(null);
+   const [newPeacefulMsg, setNewPeacefulMsg] = useState('');
+   const [dialogueLoadFeedback, setDialogueLoadFeedback] = useState<string | null>(null);
+@@ -269,6 +272,49 @@
+     onUpdateVoiceSettings({ ...voiceSettings });
+     setVoiceSavedBanner('Đã lưu cài đặt CÔNG THỨC ĐỌC BÌNH LUẬN.');
+     window.setTimeout(() => setVoiceSavedBanner(null), 3200);
++  };
++
++  // CHUA_OBS_SYNC_V101: push the current Admin state directly, then read it back.
++  // V10 displayed a success banner before the PUT had finished; this function
++  // never claims success unless both PUT and GET have completed successfully.
++  const handleSyncObsNow = async () => {
++    if (obsSyncBusy) return;
++    setObsSyncBusy(true);
++    setObsSyncMessage(null);
++    try {
++      const response = await fetch('/api/obs-sync', {
++        method: 'PUT',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({
++          overlay: { ...overlaySettings, obsCleanView: false },
++          scene: { ...sceneCalibration },
++        }),
++      });
++      const data = await response.json().catch(() => null);
++      if (!response.ok || !data?.ok || !Number.isFinite(data.savedAt)) {
++        const detail = typeof data?.error === 'string' ? data.error : `HTTP ${response.status}`;
++        throw new Error(`Server từ chối lưu cấu hình: ${detail}`);
++      }
++      const checkResponse = await fetch('/api/obs-sync', { cache: 'no-store' });
++      const verified = await checkResponse.json().catch(() => null);
++      const expectedCoinVisibility = overlaySettings.showOfferingCoins !== false;
++      if (!checkResponse.ok || !verified?.ok || !verified.snapshot ||
++          verified.snapshot.savedAt !== data.savedAt ||
++          (verified.snapshot.overlay?.showOfferingCoins !== false) !== expectedCoinVisibility) {
++        throw new Error('Server chưa xác nhận trạng thái chữ xu đúng với Admin.');
++      }
++      setObsSyncMessage({
++        ok: true,
++        text: `Đã lưu và kiểm tra trên server. Chữ “xu”: ${expectedCoinVisibility ? 'BẬT' : 'TẮT'}. OBS sẽ nhận cấu hình mới khi kết nối.`,
++      });
++    } catch (error) {
++      setObsSyncMessage({
++        ok: false,
++        text: `Đồng bộ CHƯA thành công. ${error instanceof Error ? error.message : 'Không kết nối được server.'} Dùng http://127.0.0.1:3000 để mở Admin.`,
++      });
++    } finally {
++      setObsSyncBusy(false);
++    }
+   };
+ 
+   const handleSaveOverlayStyleSettings = () => {
+@@ -3092,12 +3138,17 @@
+             <div className="rounded-xl border border-[#d4af37]/45 bg-[#25120d] p-3 space-y-2">
+               <div className="text-[#ffe082] font-semibold">Đồng bộ giao diện Chrome ↔ OBS</div>
+               <p className="text-[#e9d5b5]">Chọn cấu hình đang thấy trong Admin làm bản dùng chung. OBS sẽ nhận lại thông số bảng, chữ xu và căn chỉnh camera. OBS vẫn ẩn bảng quản trị khi dùng ?obs=1.</p>
+-              <button type="button" onClick={() => {
+-                onUpdateOverlaySettings({ ...overlaySettings });
+-                setOverlaySavedBanner('Đã gửi cấu hình từ Chrome sang server. Kiểm tra lại OBS.');
+-              }} className="rounded-lg bg-[#d4af37] px-3 py-2 text-[#1b0d08] font-bold hover:bg-[#e8c260] cursor-pointer">
+-                Đồng bộ giao diện hiện tại sang OBS
++              <button type="button" disabled={obsSyncBusy} onClick={handleSyncObsNow}
++                className="rounded-lg bg-[#d4af37] px-3 py-2 text-[#1b0d08] font-bold hover:bg-[#e8c260] cursor-pointer disabled:opacity-50">
++                {obsSyncBusy ? 'Đang lưu và kiểm tra trên server…' : 'Đồng bộ giao diện hiện tại sang OBS'}
+               </button>
++              {obsSyncMessage && (
++                <p role="status" className={`rounded-lg border px-3 py-2 ${obsSyncMessage.ok
++                    ? 'border-[#499e5b]/60 bg-[#132918] text-[#b9f6c7]'
++                    : 'border-[#d18a56]/60 bg-[#3d2219] text-[#ffd0b0]'}`}>
++                  {obsSyncMessage.text}
++                </p>
++              )}
+             </div>
+             <div className="flex items-center justify-between gap-2 rounded-xl bg-[#250c12] border border-[#d4af37]/40 p-3">
+               <div>
