@@ -151,7 +151,7 @@ export function TempleEnvironment({ quality }: TempleEnvironmentProps) {
 
       {/* Long Deep-Red Ceremonial Carpet stretching from Expanded Entrance directly to the Stepped Altar */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 4.6]} receiveShadow>
-        <planeGeometry args={[2.48, 30.8]} />
+        <planeGeometry args={[1.40, 30.8]} />
         <meshStandardMaterial
           map={carpetTex}
           roughness={0.76}

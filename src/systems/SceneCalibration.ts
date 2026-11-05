@@ -22,13 +22,13 @@ export const IMAGE_BG_CAMERA_BASE = {
   posY: 4.84,
   posZ: 26.2,
   lookAtX: 0,
-  lookAtY: 3.38,
+  lookAtY: -1.05, // TINH_TAM_V172_BUDDHA_TOP_THIRD: project altar to upper ~39% of portrait viewport
   lookAtZ: 0,
   baseFov916: 42,
   /** World Z where the wooden offering altar meets the floor (yPct = 60.4%, ndcY = -0.209) */
   altarFloorEdgeZ: -9.15,
   /** World half-width of the central red carpet (matches |ndcX| = 0.248 at z=-9.15 and |ndcX| = 0.78 at z=+15.1) */
-  carpetHalfWidth: 1.88,
+  carpetHalfWidth: 0.22, // TINH_TAM_V179_LOI_DI_THANG: lối đi giữa thật hẹp
 } as const;
 
 export interface CalibratedAltarStation {
@@ -50,29 +50,27 @@ export interface CalibratedSeatCoord {
   isOverflow: boolean;
 }
 
-const IMAGE_SEAT_COLS_PER_SIDE = 5;
-const IMAGE_TOTAL_MAIN_MATS = 104; // 52 left + 52 right
+const IMAGE_SEAT_COLS_PER_SIDE = 4;
+const IMAGE_TOTAL_MAIN_MATS = 80; // V17: 45 left + 45 right, exactly 90 visible positions
 
 /**
- * 14 perspective-tapered row tiers per golden-tile wing (52 seats/side × 2 = 104 main seats).
+ * 12 perspective-tapered row tiers per wing (45 seats/side × 2 = 90 main seats).
  * Upper/mid hall rows use 5 -> 4 -> 3 columns on the wide golden tiles; foreground rows where
  * the red carpet widens toward the bottom of the 9:16 frame taper cleanly to 2 -> 1 column.
  */
+// TINH_TAM_V183_80_GHE_DEU: 10 hàng, 8 ghế mỗi hàng (4 trái + 4 phải).
+// Một hệ lưới, không chia nhóm 3/4 cột; khoảng cách theo màn hình 9:16 đều nhau.
 const IMAGE_PERSPECTIVE_SEAT_TIERS: ReadonlyArray<{ baseZ: number; cols: number }> = [
-  { baseZ: -6.9, cols: 5 },
-  { baseZ: -5.6, cols: 5 },
-  { baseZ: -4.3, cols: 5 },
-  { baseZ: -3.0, cols: 5 },
-  { baseZ: -1.7, cols: 5 },
-  { baseZ: -0.35, cols: 5 },
-  { baseZ: 1.05, cols: 4 },
-  { baseZ: 2.45, cols: 4 },
-  { baseZ: 3.85, cols: 4 },
-  { baseZ: 5.3, cols: 3 },
-  { baseZ: 6.75, cols: 3 },
-  { baseZ: 8.4, cols: 2 },
-  { baseZ: 10.85, cols: 1 },
-  { baseZ: 13.2, cols: 1 },
+  { baseZ: -4.5, cols: 4 },
+  { baseZ: 1.0, cols: 4 },
+  { baseZ: 5.3, cols: 4 },
+  { baseZ: 8.6, cols: 4 },
+  { baseZ: 11.1, cols: 4 },
+  { baseZ: 13.1, cols: 4 },
+  { baseZ: 14.6, cols: 4 },
+  { baseZ: 15.9, cols: 4 },
+  { baseZ: 17.0, cols: 4 },
+  { baseZ: 17.9, cols: 4 },
 ];
 
 function clampNum(val: unknown, fallback: number, min: number, max: number): number {
@@ -87,7 +85,7 @@ export function sanitizeSceneCalibration(
   if (!raw) return { ...DEFAULT_SCENE_CALIBRATION };
   return {
     sceneMode: raw.sceneMode === 'original_3d' ? 'original_3d' : 'image_background',
-    backgroundUrl: '/assets/temple-background.png',
+    backgroundUrl: '/assets/temple-background-v179-straight.webp',
     bgScale: clampNum(raw.bgScale, DEFAULT_SCENE_CALIBRATION.bgScale, 0.85, 1.35),
     bgOffsetX: clampNum(raw.bgOffsetX, DEFAULT_SCENE_CALIBRATION.bgOffsetX, -20, 20),
     bgOffsetY: clampNum(raw.bgOffsetY, DEFAULT_SCENE_CALIBRATION.bgOffsetY, -20, 20),
@@ -250,9 +248,14 @@ function computeSafeFloorMaxXAtZ(
   const zoom = Math.max(0.75, Math.min(1.35, cal.cameraZoom || 1.0));
   const vFovRad = THREE.MathUtils.degToRad(IMAGE_BG_CAMERA_BASE.baseFov916 / zoom);
   const tanH = (9 / 16) * Math.tan(vFovRad / 2);
-  const deltaZ = Math.max(6.0, IMAGE_BG_CAMERA_BASE.posZ - z);
-  const approxDepth = 0.27 + 0.9984 * deltaZ;
-  return maxAbsNdcX * approxDepth * tanH;
+  // V17.2: use real pitched-camera depth, not the old shallow-angle approximation.
+  const pitch = Math.atan2(
+    IMAGE_BG_CAMERA_BASE.posY - IMAGE_BG_CAMERA_BASE.lookAtY,
+    IMAGE_BG_CAMERA_BASE.posZ - IMAGE_BG_CAMERA_BASE.lookAtZ,
+  );
+  const exactDepth = (IMAGE_BG_CAMERA_BASE.posZ - z) * Math.cos(pitch) +
+    IMAGE_BG_CAMERA_BASE.posY * Math.sin(pitch);
+  return maxAbsNdcX * Math.max(1, exactDepth) * tanH;
 }
 
 /**
@@ -269,62 +272,49 @@ export function getImageCalibratedSeatPosition(
   seatIndex: number,
   cal: SceneCalibrationSettings = activeCalibration,
 ): CalibratedSeatCoord {
-  const carpetClearMinX = IMAGE_BG_CAMERA_BASE.carpetHalfWidth + 0.26; // 2.14m clear of red carpet border
-  const widthScale = cal.seatWidthScale || 1.0;
-  const depthScale = cal.seatDepthScale || 1.0;
-  const offsetZ = cal.seatOffsetZ || 0;
-
-  // Base row Z span from near the altar apron (-6.85) down to the foreground (+12.95)
-  const zBack = -6.85;
-  const zFront = 12.95;
-  const zMid = 1.8;
+  // TINH_TAM_V179_LOI_DI_THANG: ảnh nền 9:16 với lối giữa thật thẳng,
+  // nệm sát hai bên, 90 vị trí chia đều hai cánh. Không sửa thuật toán nghi lễ.
+  // TINH_TAM_V183_80_GHE_DEU: 10 hàng x 8 ghế, không có dãy cuối bị tách.
+  // Khoảng cách giữa các hàng là một hằng số theo tọa độ màn hình 9:16.
+  // Không lấy khoảng cách thế giới Z cố định, vì phối cảnh sẽ làm hàng gần bị thưa.
+  const carpetClearMinX = IMAGE_BG_CAMERA_BASE.carpetHalfWidth + 0.13;
 
   if (seatIndex < IMAGE_TOTAL_MAIN_MATS) {
     const side: 'left' | 'right' = seatIndex % 2 === 0 ? 'left' : 'right';
-    const sideSlot = Math.floor(seatIndex / 2); // 0 .. 51
+    const sideSlot = Math.floor(seatIndex / 2); // 0..39 mỗi bên
+    const row = Math.floor(sideSlot / 4);      // 0..9
+    const col = sideSlot % 4;                  // 0..3, từ lối đi ra bên ngoài
 
-    let row = 0;
-    let col = 0;
-    let baseRowZ = -6.9;
-    let colsInRow = 5;
-    let accum = 0;
+    // Tọa độ hàng từ 42.5% đến 91.0% chiều cao khung 9:16.
+    // Khoảng cách 5.39%/hàng, KHÔNG có hàng hoặc cụm ghế nào bị bỏ trống.
+    const firstSeatY = 0.425;
+    const lastSeatY = 0.910;
+    const screenY = THREE.MathUtils.lerp(firstSeatY, lastSeatY, row / 9);
+    const ndcY = 1 - 2 * screenY;
 
-    for (let r = 0; r < IMAGE_PERSPECTIVE_SEAT_TIERS.length; r++) {
-      const tier = IMAGE_PERSPECTIVE_SEAT_TIERS[r];
-      if (sideSlot < accum + tier.cols) {
-        row = r;
-        col = sideSlot - accum;
-        baseRowZ = tier.baseZ;
-        colsInRow = tier.cols;
-        break;
-      }
-      accum += tier.cols;
-    }
+    // Chiếu ngược tọa độ màn hình lên mặt sàn y=0 của camera hiện tại.
+    const pitch = Math.atan2(
+      IMAGE_BG_CAMERA_BASE.posY - IMAGE_BG_CAMERA_BASE.lookAtY,
+      IMAGE_BG_CAMERA_BASE.posZ - IMAGE_BG_CAMERA_BASE.lookAtZ,
+    );
+    const sinPitch = Math.sin(pitch);
+    const cosPitch = Math.cos(pitch);
+    const zoom = THREE.MathUtils.clamp(cal.cameraZoom || 1, 0.75, 1.35);
+    const tanHalfV = Math.tan(THREE.MathUtils.degToRad(IMAGE_BG_CAMERA_BASE.baseFov916 / zoom / 2));
+    const screenSlope = ndcY * tanHalfV;
+    const cameraToSeatZ = IMAGE_BG_CAMERA_BASE.posY *
+      (cosPitch + screenSlope * sinPitch) /
+      (sinPitch - screenSlope * cosPitch);
+    const minZ = Math.max(-7.25, cal.altarStationZ + 0.85);
+    const z = THREE.MathUtils.clamp(IMAGE_BG_CAMERA_BASE.posZ - cameraToSeatZ, minZ, 18.25);
 
-    const scaledRowZ = zMid + (baseRowZ - zMid) * depthScale + offsetZ;
-
-    // Never allow any seat to cross onto the altar ritual apron (z < -7.25) or past the entrance
-    const minSafeSeatZ = Math.max(-7.25, cal.altarStationZ + 0.85);
-    const maxSafeSeatZ = Math.min(13.85, cal.entranceZ - 0.85);
-    const z = Math.max(minSafeSeatZ, Math.min(maxSafeSeatZ, scaledRowZ));
-
-    // Available golden-tile wing width at this exact Z
-    const safeMaxX = computeSafeFloorMaxXAtZ(z, cal, 0.865);
-    let absX: number;
-    if (colsInRow === 1) {
-      absX = Math.min(safeMaxX, carpetClearMinX + 0.16 * widthScale);
-    } else {
-      const desiredOuterX = Math.min(
-        safeMaxX,
-        carpetClearMinX + (0.75 + (colsInRow - 1) * 0.82) * widthScale,
-      );
-      const usableSpan = Math.max(0.45 * (colsInRow - 1), desiredOuterX - carpetClearMinX);
-      const colFraction = col / (colsInRow - 1);
-      absX = Math.min(
-        safeMaxX,
-        Math.max(carpetClearMinX, carpetClearMinX + colFraction * usableSpan),
-      );
-    }
+    // Bốn cột thẳng hàng mỗi bên và sát đường đi nhỏ; không xếp kiểu xen kẽ.
+    const columnNdcX = 0.205 + col * 0.205;
+    const viewDepth = (IMAGE_BG_CAMERA_BASE.posZ - z) * cosPitch +
+      IMAGE_BG_CAMERA_BASE.posY * sinPitch;
+    const tanHalfH = (9 / 16) * tanHalfV;
+    const safeMaxX = computeSafeFloorMaxXAtZ(z, cal, 0.89);
+    const absX = Math.min(safeMaxX, Math.max(carpetClearMinX, columnNdcX * viewDepth * tanHalfH));
     const x = side === 'left' ? -absX : absX;
 
     return {
@@ -420,9 +410,9 @@ export function getImageCalibratedCarpetLanes(
   altarApproachThresholdZ: number;
 } {
   return {
-    outboundLaneX: isXinXam ? -0.58 : side === 'left' ? -0.48 : 0.48,
-    returnLaneX: side === 'left' ? -1.08 : 1.08,
-    exitLaneX: side === 'left' ? -0.78 : 0.78,
+    outboundLaneX: isXinXam ? -0.09 : side === 'left' ? -0.11 : 0.11,
+    returnLaneX: side === 'left' ? -0.19 : 0.19,
+    exitLaneX: side === 'left' ? -0.16 : 0.16,
     altarApproachThresholdZ: (activeCalibration.altarStationZ ?? -8.15) + 1.25,
   };
 }
@@ -439,9 +429,18 @@ export function computeCharacterDepthScale(
     return 1.0;
   }
   const zFar = cal.altarStationZ ?? -8.15;
-  const zNear = Math.max(zFar + 4, (cal.entranceZ ?? 14.9) - 1.2);
+  const zNear = Math.max(zFar + 4, 19.30 - 1.2);
   const depthT = THREE.MathUtils.clamp((worldZ - zFar) / (zNear - zFar), 0, 1);
-  return THREE.MathUtils.lerp(cal.farCharacterScale, cal.nearCharacterScale, depthT);
+  // V17.2: consistent small, legible 2D figures across 12 screen-space rows.
+  // Preserve the user's near/far scale tuning while limiting crowding at the front.
+  // TINH_TAM_V181_USER_XA_RO_NET:
+  // Chỉ tăng mạnh nhân vật HÀNG XA gần tượng Phật; hàng trước tăng ít.
+  // Smoothstep hạn chế đổi kích thước đột ngột giữa các hàng ghế.
+  // Mức sàn ngăn cài đặt cũ trong localStorage làm người hàng xa quá bé.
+  const easedDepthT = depthT * depthT * (3 - 2 * depthT);
+  const farScale = Math.max(0.75, cal.farCharacterScale * 0.91);
+  const nearScale = Math.max(0.48, cal.nearCharacterScale * 0.46);
+  return THREE.MathUtils.lerp(farScale, nearScale, easedDepthT);
 }
 
 /**

@@ -649,6 +649,8 @@ export interface ActiveWoodenFishAction {
   durationMs: number;
 }
 
+export type TempleCharacterType = 'nam' | 'nu' | 'ong' | 'ba' | 'ni' | 'tieu' | 'cao_tang';
+
 export interface Participant {
   userId: string;
   username: string;
@@ -676,6 +678,7 @@ export interface Participant {
   lastInteractionAt: number;
   isDeparting: boolean;
   departingStartedAt?: number;
+  appearance?: TempleCharacterType;
   robeHueShift: number;
   hasHairBun: boolean;
   isDemo: boolean;
@@ -696,6 +699,7 @@ export interface MeritLedgerEntry {
   firstSeenAt: number;
   lastInteractionAt: number;
   isActiveInScene: boolean;
+  appearance?: TempleCharacterType;
   isDemo: boolean;
 }
 
@@ -1260,7 +1264,7 @@ export interface SceneCalibrationSettings {
 
 export const DEFAULT_SCENE_CALIBRATION: SceneCalibrationSettings = {
   sceneMode: 'image_background',
-  backgroundUrl: '/assets/temple-background.png',
+  backgroundUrl: '/assets/temple-background-v179-straight.webp', // TINH_TAM_V172_BUDDHA_TOP_THIRD
   bgScale: 1.0,
   bgOffsetX: 0,
   bgOffsetY: 0,
@@ -1296,6 +1300,14 @@ export interface StreamOverlaySettings {
   showNotifications: boolean;
   showUsernames: boolean;
   showCommentBubbles: boolean;
+  /** TINH_TAM_V1852_LABEL_UI: tuỳ chỉnh tên ở chân và bong bóng bình luận. */
+  namePlateWidth?: number;
+  namePlateHeight?: number;
+  namePlateFontSize?: number;
+  namePlateOffsetY?: number; // pixels BELOW feet; zero = at the feet
+  commentBubbleWidth?: number;
+  commentBubbleHeight?: number;
+  commentBubbleFontSize?: number;
   /** Global UI panel scale multiplier (0.70 – 1.15, default 0.86) */
   panelScale: number;
   /** Global semi-transparent RGBA background opacity (0.25 – 0.85, default 0.45) */
@@ -1899,6 +1911,13 @@ export const DEFAULT_OVERLAY_SETTINGS: StreamOverlaySettings = {
   showNotifications: true,
   showUsernames: true,
   showCommentBubbles: true,
+  namePlateWidth: 72,
+  namePlateHeight: 22,
+  namePlateFontSize: 14,
+  namePlateOffsetY: 8,
+  commentBubbleWidth: 160,
+  commentBubbleHeight: 56,
+  commentBubbleFontSize: 16,
   panelScale: 0.86,
   panelOpacity: 0.45,
   lotusParticleDensity: 1.0,

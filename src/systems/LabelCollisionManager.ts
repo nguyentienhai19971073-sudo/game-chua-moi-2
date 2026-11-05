@@ -54,6 +54,11 @@ export interface LabelLayoutOptions {
   showUsernames: boolean;
   showCommentBubbles: boolean;
   panelScale?: number;
+  namePlateWidth?: number;
+  namePlateHeight?: number;
+  namePlateOffsetY?: number;
+  commentBubbleWidth?: number;
+  commentBubbleHeight?: number;
   showLeaderboard?: boolean;
   showGiftPanel?: boolean;
   commentDurationMs?: number;
@@ -70,6 +75,7 @@ export interface LabelLayoutResult {
 }
 
 const _projVec = new THREE.Vector3();
+const _projFeet = new THREE.Vector3(); // TINH_TAM_V179_LOI_DI_THANG
 const _bTop = new THREE.Vector3();
 const _bBot = new THREE.Vector3();
 const _bSide = new THREE.Vector3();
@@ -100,17 +106,9 @@ export function isRectInsideViewport(
   );
 }
 
-function estimateNameWidth(username: string, scale: number): number {
-  const charCount = Array.from(username).length;
-  return Math.min(135, Math.max(50, Math.min(charCount, 20) * 7.4 + 18)) * scale;
-}
-
-function estimateBubbleDims(comment: string, scale: number): { width: number; height: number } {
-  const charCount = Array.from(comment).length;
-  const width = Math.min(210, Math.max(85, Math.min(charCount, 28) * 7.5 + 24)) * scale;
-  const lines = charCount > 22 ? 2 : 1;
-  const height = (lines === 2 ? 53 : 32) * scale;
-  return { width, height };
+// TINH_TAM_V1852_LABEL_UI: bubble rectangles must match the rendered fixed-size DOM.
+function estimateBubbleDims(scale: number, widthPx: number, heightPx: number): { width: number; height: number } {
+  return { width: widthPx * scale, height: heightPx * scale };
 }
 
 // Keep tags physically attached to the projected head. Do not flank the altar,
@@ -147,12 +145,22 @@ export function solveLabelAndBubbleLayout(
     showLeaderboard = false,
     showGiftPanel = false,
     commentDurationMs = 5000,
+    namePlateWidth: rawNamePlateWidth = 72,
+    namePlateHeight: rawNamePlateHeight = 22,
+    namePlateOffsetY: rawNamePlateOffsetY = 8,
+    commentBubbleWidth: rawCommentBubbleWidth = 160,
+    commentBubbleHeight: rawCommentBubbleHeight = 56,
     sceneMode = 'original_3d',
   } = options;
 
   const halfW = viewportWidth * 0.5;
   const halfH = viewportHeight * 0.5;
   const scale = Math.max(0.75, Math.min(1.15, panelScale));
+  const namePlateWidth = Math.max(44, Math.min(160, rawNamePlateWidth));
+  const namePlateHeight = Math.max(16, Math.min(54, rawNamePlateHeight));
+  const namePlateOffsetY = Math.max(0, Math.min(30, rawNamePlateOffsetY));
+  const commentBubbleWidth = Math.max(90, Math.min(280, rawCommentBubbleWidth));
+  const commentBubbleHeight = Math.max(36, Math.min(110, rawCommentBubbleHeight)); // TINH_TAM_V1852_LABEL_UI
   const edgePad = 5;
   const topSafeY = Math.max(36, 40 * scale);
   const bottomSafeY = Math.min(viewportHeight - 10, viewportHeight - 36 * scale);
@@ -254,6 +262,7 @@ export function solveLabelAndBubbleLayout(
     inFrustum: boolean;
     sx: number;
     sy: number;
+    feetY: number;
     hasActiveBubble: boolean;
     bubbleAgeMs: number;
     priorityScore: number;
@@ -276,6 +285,8 @@ export function solveLabelAndBubbleLayout(
 
     const sx = _projVec.x * halfW + halfW;
     const sy = -_projVec.y * halfH + halfH;
+    _projFeet.set(c.worldX, c.worldY + 0.04, c.worldZ).project(camera);
+    const feetY = -_projFeet.y * halfH + halfH; // TINH_TAM_V179_LOI_DI_THANG
 
     const bubbleAgeMs =
       c.lastComment && c.lastCommentAt !== undefined ? now - c.lastCommentAt : Infinity;
@@ -296,6 +307,7 @@ export function solveLabelAndBubbleLayout(
       inFrustum,
       sx,
       sy,
+      feetY,
       hasActiveBubble,
       bubbleAgeMs,
       priorityScore,
@@ -343,20 +355,21 @@ export function solveLabelAndBubbleLayout(
     const hasBubble = showCommentBubbles && item.hasActiveBubble;
     if (!hasName && !hasBubble) continue;
 
-    const nameWidth = estimateNameWidth(item.input.username, scale);
-    const nameHeight = 21 * scale; // CHUA_COLLISION_READABLE_V2
+    const nameWidth = namePlateWidth * scale;
+    const nameHeight = namePlateHeight * scale;
     const bubble = hasBubble
-      ? estimateBubbleDims(item.input.lastComment || '', scale)
+      ? estimateBubbleDims(scale, commentBubbleWidth, commentBubbleHeight)
       : null;
-    const bubbleGap = 4 * scale;
-    const baseNameBottom = item.sy - 1.5 * scale;
+    // Nameplate TOP starts slightly below projected feet. It never floats above the head.
+    const baseNameBottom = item.feetY + (namePlateHeight + namePlateOffsetY) * scale; // TINH_TAM_V1852_LABEL_UI
+    const baseBubbleBottom = item.sy - 6 * scale;
 
     let bestNameRect: ScreenRect | null = null;
     let bestBubbleRect: ScreenRect | null = null;
     let bestNameX = item.sx;
     let bestNameY = baseNameBottom;
     let bestBubbleX = item.sx;
-    let bestBubbleY = baseNameBottom - nameHeight - bubbleGap;
+    let bestBubbleY = baseBubbleBottom;
 
     for (const [offsetX, offsetY] of HEAD_STACK_OFFSETS) {
       const cx = item.sx + offsetX * scale;
@@ -367,9 +380,7 @@ export function solveLabelAndBubbleLayout(
         top: nameBottom - nameHeight,
         bottom: nameBottom,
       };
-      const bubbleBottom = hasName
-        ? nameRect.top - bubbleGap
-        : nameBottom - bubbleGap;
+      const bubbleBottom = baseBubbleBottom + offsetY * scale;
       const bubbleRect: ScreenRect | null = bubble
         ? {
             left: cx - bubble.width * 0.5,
@@ -416,7 +427,7 @@ export function solveLabelAndBubbleLayout(
     if (!bestNameRect && !bestBubbleRect && bubble) {
       for (const [offsetX, offsetY] of HEAD_STACK_OFFSETS) {
         const cx = item.sx + offsetX * scale;
-        const by = baseNameBottom + offsetY * scale - bubbleGap;
+        const by = baseBubbleBottom + offsetY * scale;
         const bubbleRect = {
           left: cx - bubble.width * 0.5,
           right: cx + bubble.width * 0.5,
@@ -440,7 +451,7 @@ export function solveLabelAndBubbleLayout(
       const minX = edgePad + bubble.width * 0.5;
       const maxX = viewportWidth - edgePad - bubble.width * 0.5;
       const clampedX = Math.max(minX, Math.min(maxX, item.sx));
-      const candidateBottom = baseNameBottom - (hasName ? nameHeight + bubbleGap : bubbleGap);
+      const candidateBottom = baseBubbleBottom;
       const minBottom = edgePad + bubble.height;
       const maxBottom = viewportHeight - edgePad;
       // CHUA_BUBBLE_COLLISION_SAFE_V1: search free rows lower in the
@@ -551,7 +562,7 @@ export function solveLabelAndBubbleLayout(
       out.bubbleOpacity = 0;
       if (index >= 16) continue;
 
-      const bubble = estimateBubbleDims(item.input.lastComment || '', scale);
+      const bubble = estimateBubbleDims(scale, commentBubbleWidth, commentBubbleHeight);
       const minX = edgePad + bubble.width * 0.5;
       const maxX = viewportWidth - edgePad - bubble.width * 0.5;
       if (minX > maxX) continue;

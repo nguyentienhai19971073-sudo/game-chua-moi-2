@@ -49,6 +49,7 @@ import {
   normalizeSpeechUsername,
   voiceManager,
 } from './VoiceManager';
+import { detectTempleCharacterType } from './CharacterAppearance';
 import { pickTempleLikeDialogue, pickTempleWelcomeDialogue } from './TempleDialogueBank';
 
 type PrayerTemplateKey = keyof Omit<CommentVoiceTemplates, 'general'>;
@@ -620,6 +621,7 @@ export class TikTokEventManager {
       existing.lastGiftAt = p.lastGiftAt;
       existing.lastInteractionAt = p.lastInteractionAt;
       existing.isActiveInScene = !p.isDeparting;
+      existing.appearance = p.appearance;
       existing.isDemo = p.isDemo;
     } else {
       this.meritLedger.set(p.userId, {
@@ -637,6 +639,7 @@ export class TikTokEventManager {
         firstSeenAt: p.lastInteractionAt,
         lastInteractionAt: p.lastInteractionAt,
         isActiveInScene: true,
+        appearance: p.appearance,
         isDemo: p.isDemo,
       });
     }
@@ -2429,6 +2432,8 @@ export class TikTokEventManager {
   }): { participant: Participant; isNew: boolean; isReturning: boolean } {
     const existing = this.participantsMap.get(params.userId);
     if (existing) {
+      // V16.1: migrate participants without a selected role to the female 2D avatar.
+      if (!existing.appearance) existing.appearance = 'nu';
       if (existing.isDeparting) {
         this.cancelParticipantDeparture(existing, params.now);
       }
@@ -2469,6 +2474,7 @@ export class TikTokEventManager {
       lastActivityAt: params.now,
       lastInteractionAt: params.now,
       isDeparting: false,
+      appearance: priorLedger?.appearance ?? 'nu',
       robeHueShift: (seed - 0.5) * 0.08,
       hasHairBun: seed > 0.45,
       isDemo: params.isDemo,
@@ -2503,6 +2509,10 @@ export class TikTokEventManager {
     this.userCommentRateMap.set(params.userId, params.now);
 
     const { participant, isNew } = this.ensureParticipant(params);
+    // Only a role at the START of the actual comment selects this viewer's 3D appearance.
+    // Later comments without a role keep the last selection. Voice and bubbles use original text.
+    const selectedAppearance = detectTempleCharacterType(rawNormalized);
+    if (selectedAppearance) participant.appearance = selectedAppearance;
     participant.commentCount += 1;
     // Attached strictly to THIS character's userId for the configurable overhead bubble (comment text ONLY, no username!)
     const displayComment = rawNormalized.slice(0, 140);

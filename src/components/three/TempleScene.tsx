@@ -13,7 +13,7 @@ import {
   SceneCalibrationSettings,
   StreamOverlaySettings,
 } from '../../types/temple';
-import { configureTempleCamera, getSeatPosition } from '../../systems/SeatManager';
+import { configureTempleCamera, getSeatPosition, TOTAL_MAIN_MATS } from '../../systems/SeatManager';
 import {
   IMAGE_BG_CAMERA_BASE,
   configureImageBackgroundCamera,
@@ -36,6 +36,7 @@ import { FixedPrayerMats } from './FixedPrayerMats';
 import { GiftEffectManager } from './GiftEffectManager';
 import { createRadialGlowTexture, liveCharacterPositions } from './templeResources';
 import { getTikTokDisplayName } from '../../utils/tiktokDisplayName';
+import { compactPlayerName } from '../../utils/compactPlayerName'; // TINH_TAM_V171_90_NAMES
 import { recordRuntimeDiagnostic } from '../../systems/RuntimeDiagnostics';
 
 interface TempleSceneProps {
@@ -384,7 +385,7 @@ function SceneAlignmentGuidesOverlay({
     const altarRight = toPct(6.2, 0, zTop);
     const entrancePt = toPct(0, 0, sceneCalibration.entranceZ);
 
-    const seats = Array.from({ length: 104 }, (_, idx) => {
+    const seats = Array.from({ length: TOTAL_MAIN_MATS }, (_, idx) => {
       const s = getImageCalibratedSeatPosition(idx, sceneCalibration);
       return { ...toPct(s.x, 0, s.z), side: s.side };
     });
@@ -454,7 +455,7 @@ function SceneAlignmentGuidesOverlay({
           strokeDasharray="0.9 0.9"
         />
 
-        {/* 104 Symmetrical Seat Anchors */}
+        {/* 80 Symmetrical Seat Anchors */}
         {guides.seats.map((pt, idx) => (
           <circle
             key={`guide-seat-${idx}`}
@@ -491,7 +492,7 @@ function SceneAlignmentGuidesOverlay({
 
       <div className="absolute left-2 bottom-12 px-2 py-1 rounded bg-black/70 border border-[#ffd875]/55 text-[9.5px] text-[#ffe9a8] leading-tight space-y-0.5">
         <div className="font-semibold">LƯỚI CĂN CHỈNH PHỐI CẢNH 3D</div>
-        <div>Đứt đỏ: Chân bàn thờ · Vàng: Thảm đỏ · Xanh: 104 chỗ ngồi · Cam: Trạm lễ</div>
+        <div>Đứt đỏ: Chân bàn thờ · Vàng: Lối đi nhỏ · Xanh: 80 chỗ ngồi · Cam: Trạm lễ</div>
       </div>
     </div>
   );
@@ -506,6 +507,11 @@ function CollisionAwareCharacterLabelsSync({
   showCommentBubbles,
   commentBubbleDuration,
   panelScale,
+  namePlateWidth,
+  namePlateHeight,
+  namePlateOffsetY,
+  commentBubbleWidth,
+  commentBubbleHeight,
   showLeaderboard,
   showGiftPanel,
   sceneMode,
@@ -519,6 +525,11 @@ function CollisionAwareCharacterLabelsSync({
   showCommentBubbles: boolean;
   commentBubbleDuration: number;
   panelScale: number;
+  namePlateWidth: number;
+  namePlateHeight: number;
+  namePlateOffsetY: number;
+  commentBubbleWidth: number;
+  commentBubbleHeight: number;
   showLeaderboard: boolean;
   showGiftPanel: boolean;
   sceneMode: 'image_background' | 'original_3d';
@@ -610,6 +621,11 @@ function CollisionAwareCharacterLabelsSync({
       showLeaderboard,
       showGiftPanel,
       commentDurationMs: commentBubbleDuration,
+      namePlateWidth,
+      namePlateHeight,
+      namePlateOffsetY,
+      commentBubbleWidth,
+      commentBubbleHeight,
       sceneMode,
     });
 
@@ -716,7 +732,15 @@ export function TempleScene({
   const labelSlice = participants;
   const labelSlotCount = labelSlice.length;
   const nowRender = Date.now();
-  const labelScale = Math.max(0.75, Math.min(1.1, overlaySettings.panelScale));
+  // TINH_TAM_V1852_LABEL_UI: DOM and collision rectangles share the SAME sizes.
+  const labelScale = Math.max(0.75, Math.min(1.15, overlaySettings.panelScale));
+  const namePlateWidth = Math.max(44, Math.min(160, overlaySettings.namePlateWidth ?? 72));
+  const namePlateHeight = Math.max(16, Math.min(54, overlaySettings.namePlateHeight ?? 22));
+  const namePlateOffsetY = Math.max(0, Math.min(30, overlaySettings.namePlateOffsetY ?? 8));
+  const namePlateFontSize = Math.max(8, Math.min(26, overlaySettings.namePlateFontSize ?? 14));
+  const commentBubbleWidth = Math.max(90, Math.min(280, overlaySettings.commentBubbleWidth ?? 160));
+  const commentBubbleHeight = Math.max(36, Math.min(110, overlaySettings.commentBubbleHeight ?? 56));
+  const commentBubbleFontSize = Math.max(10, Math.min(28, overlaySettings.commentBubbleFontSize ?? 16));
 
   const bgTransformStyle = useMemo(() => {
     const sx = sceneCalibration.bgScale || 1;
@@ -742,15 +766,12 @@ export function TempleScene({
           className="absolute inset-0 z-0 flex items-center justify-center overflow-hidden pointer-events-none bg-[#170904]"
         >
           <img
-            src={sceneCalibration.backgroundUrl || '/assets/temple-background.png'}
+            src={sceneCalibration.backgroundUrl || '/assets/temple-background-narrow-aisle-v17.png'}
             alt=""
             draggable={false}
             style={bgTransformStyle}
-            className={
-              overlaySettings.vertical916
-                ? 'w-full h-full object-cover object-center select-none pointer-events-none'
-                : 'h-full w-auto max-w-none object-contain object-center select-none pointer-events-none'
-            }
+            className="w-full h-full object-contain object-center select-none pointer-events-none"
+            data-v179-aspect="preserve"
           />
         </div>
       )}
@@ -842,6 +863,11 @@ export function TempleScene({
             showCommentBubbles={overlaySettings.showCommentBubbles}
             commentBubbleDuration={overlaySettings.commentBubbleDuration}
             panelScale={overlaySettings.panelScale}
+            namePlateWidth={namePlateWidth}
+            namePlateHeight={namePlateHeight}
+            namePlateOffsetY={namePlateOffsetY}
+            commentBubbleWidth={commentBubbleWidth}
+            commentBubbleHeight={commentBubbleHeight}
             showLeaderboard={overlaySettings.showLeaderboard}
             showGiftPanel={overlaySettings.showGiftPanel}
             sceneMode={sceneCalibration.sceneMode}
@@ -902,7 +928,15 @@ export function TempleScene({
                   <div
                     style={{
                       ...buildCharacterNameLabelStyle(overlaySettings.panelOpacity, variant),
-                      fontSize: `${Math.max(12, Math.round(14 * labelScale * 10) / 10)}px`, // CHUA_NAME_READABLE_V2
+                      width: `${Math.round(namePlateWidth * labelScale)}px`,
+                      height: `${Math.round(namePlateHeight * labelScale)}px`,
+                      fontSize: `${Math.round(namePlateFontSize * labelScale * 10) / 10}px`,
+                      boxSizing: 'border-box',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      padding: '0 2px',
+                      overflow: 'hidden', // TINH_TAM_V1852_LABEL_UI
                     }}
                     className={`px-1 py-[0.5px] rounded-[2px] border text-center whitespace-nowrap leading-[1.15] shadow-sm ${
                       isSpeaking
@@ -912,8 +946,11 @@ export function TempleScene({
                           : 'text-[#f3e6ce]'
                     }`}
                   >
-                    <span className="inline-block max-w-[130px] truncate align-bottom">
-                      {getTikTokDisplayName(p)}
+                    <span
+                      className="block w-full min-w-0 truncate"
+                      title={getTikTokDisplayName(p)}
+                    >
+                      {compactPlayerName(getTikTokDisplayName(p))}
                     </span>
                   </div>
                 )}
@@ -945,11 +982,19 @@ export function TempleScene({
                   <div
                     style={{
                       ...buildCommentBubbleStyle(overlaySettings.panelOpacity, isSpeaking),
-                      fontSize: `${Math.max(14, Math.round(16 * labelScale * 10) / 10)}px`, // CHUA_COMMENT_READABLE_V2
+                      width: `${Math.round(commentBubbleWidth * labelScale)}px`,
+                      height: `${Math.round(commentBubbleHeight * labelScale)}px`,
+                      fontSize: `${Math.round(commentBubbleFontSize * labelScale * 10) / 10}px`,
+                      boxSizing: 'border-box',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      overflow: 'hidden', // TINH_TAM_V1852_LABEL_UI
                     }}
-                    className="relative max-w-[210px] px-2 py-[3px] rounded-[3px] border text-[#fff7e6] font-medium leading-[1.2] text-center shadow-[0_2px_8px_rgba(0,0,0,0.48)]"
+                    className="relative px-2 py-[3px] rounded-[3px] border text-[#fff7e6] font-medium leading-[1.2] text-center shadow-[0_2px_8px_rgba(0,0,0,0.48)]"
                   >
-                    <span className="line-clamp-2 break-words">{p.lastComment}</span>
+                    <span className="line-clamp-2 break-words w-full min-w-0 overflow-hidden">{p.lastComment}</span>
                     <span
                       aria-hidden="true"
                       className="block mx-auto mt-[1px] w-0 h-0 border-l-[3px] border-l-transparent border-r-[3px] border-r-transparent border-t-[3px] border-t-[#e5bd5a]/85"

@@ -11,6 +11,9 @@ import { computeCharacterDepthScale, getActiveSceneCalibration } from '../../sys
 import { soundSynthesizer } from '../../systems/SoundSynthesizer';
 import { tiktokEventManager } from '../../systems/TikTokEventManager';
 import { liveCharacterPositions } from './templeResources';
+import { Suspense } from 'react';
+import { Temple2DAvatar, type Temple2DAnimation } from './Temple2DAvatar'; // TINH_TAM_V15_2D_PORTRAITS, TINH_TAM_V16_DIRECTION_ANIM
+import { getTempleCostume, TempleFaceDetails, TempleSculptedRobe, TempleSculptedSleeve, TempleSculptedHead } from './TempleCostumes';
 
 // Shared Geometries at Module Scope (Zero per-character geometry allocation!)
 const SHARED_GEOS = {
@@ -215,6 +218,11 @@ interface WorshipperCharacterProps {
 
 export function WorshipperCharacter({ participant, castShadows }: WorshipperCharacterProps) {
   const rootRef = useRef<THREE.Group>(null);
+  const portraitRef = useRef<THREE.Group>(null);
+  const avatarMotionRef = useRef<Temple2DAnimation>({
+    walking: false, phase: 0, rotY: Math.PI, kneeling: false, bow: 0,
+    sitAmount: 0, departing: false, // TINH_TAM_V173_SIT_EXIT_STATE
+  });
   const upperBodyRef = useRef<THREE.Group>(null);
   const leftArmPivotRef = useRef<THREE.Group>(null);
   const rightArmPivotRef = useRef<THREE.Group>(null);
@@ -238,11 +246,14 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
   const grandOuterRingRef = useRef<THREE.Mesh>(null);
 
   const initialSeat = useMemo(() => getSeatPosition(participant.seatIndex), [participant.seatIndex]);
+  const costume = getTempleCostume(participant.appearance);
+  const attireScale = costume?.stature ?? 1;
   const robeMat = useMemo(() => {
+    if (participant.appearance) return getTempleCostume(participant.appearance)!.robe;
     const idx =
       Math.abs(Math.round((participant.robeHueShift + 0.5) * 20)) % ROBE_MATERIAL_POOL.length;
     return ROBE_MATERIAL_POOL[idx];
-  }, [participant.robeHueShift]);
+  }, [participant.appearance, participant.robeHueShift]);
 
   const kin = useRef({
     x: participant.laneOffset,
@@ -1107,12 +1118,47 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
     // Restore the original compact worshipper visual scale in image-background
     // mode; keep exact walking/seat coordinates and all ritual animations.
     const charScale = computeCharacterDepthScale(k.z) *
-      (getActiveSceneCalibration().sceneMode === 'image_background' ? 0.92 : 1);
+      (getActiveSceneCalibration().sceneMode === 'image_background' ? 1.0 : 1); // TINH_TAM_V179_LOI_DI_THANG
 
     if (rootRef.current) {
       rootRef.current.position.set(k.x, k.y, k.z);
       rootRef.current.rotation.y = k.rotY;
-      rootRef.current.scale.setScalar(charScale);
+      rootRef.current.scale.setScalar(charScale * attireScale);
+    }
+
+    // V16: render back view toward the Buddha, front view only when facing viewer.
+    // Simple 2D walk frames, bowing and knee bend use existing locomotion stages.
+    avatarMotionRef.current.walking = isWalking;
+    avatarMotionRef.current.phase = k.walkCycle;
+    avatarMotionRef.current.rotY = k.rotY;
+    avatarMotionRef.current.kneeling = isKneelingPosture;
+    avatarMotionRef.current.bow = targetTorsoPitch;
+    // TINH_TAM_V173_SIT_EXIT_STATE: animate the *pose*, not just squish a standing image.
+    // Kneel 0->1, rise 1->0; original Three.js walking/seat/ritual logic remains intact.
+    const easeSit = (p: number) => {
+      const a = THREE.MathUtils.clamp(p, 0, 1);
+      return a * a * (3 - 2 * a);
+    };
+    let seatedBlend = isKneelingPosture ? 1 : 0;
+    if (k.stage === 'kneeling') {
+      seatedBlend = easeSit(k.stageTimer / 0.50);
+    } else if (k.stage === 'departing_standing') {
+      seatedBlend = 1 - easeSit(k.stageTimer / 0.56);
+    } else if (k.stage === 'leaving_seat_to_aisle') {
+      seatedBlend = 1 - easeSit(k.stageTimer / 0.43);
+    }
+    avatarMotionRef.current.sitAmount = seatedBlend;
+    // Front illustration ONLY on the outward trip to the entrance.
+    // Never infer facing from camera angle (V16's original reversal bug).
+    avatarMotionRef.current.departing =
+      k.stage === 'departing_exit' || k.stage === 'departing_fade';
+    if (portraitRef.current) {
+      // Sprite-frame artwork includes the lower seated silhouette already.
+      // Remove the old .76x portrait squash so the sit pose stays believable.
+      portraitRef.current.scale.y = THREE.MathUtils.damp(
+        portraitRef.current.scale.y, 1, 12, delta);
+      portraitRef.current.scale.x = THREE.MathUtils.damp(
+        portraitRef.current.scale.x, 1, 12, delta);
     }
 
     if (upperBodyRef.current) {
@@ -1132,9 +1178,9 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
     }
 
     if (leftLegRef.current && rightLegRef.current && kneelingSkirtRef.current) {
-      leftLegRef.current.visible = !isKneelingPosture;
-      rightLegRef.current.visible = !isKneelingPosture;
-      kneelingSkirtRef.current.visible = isKneelingPosture;
+      leftLegRef.current.visible = !isKneelingPosture && false;
+      rightLegRef.current.visible = !isKneelingPosture && false;
+      kneelingSkirtRef.current.visible = isKneelingPosture && false;
 
       if (isWalking) {
         const swing = Math.sin(k.walkCycle) * 0.52;
@@ -1278,7 +1324,7 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
       liveEntry.x = k.x;
       liveEntry.y = k.y;
       liveEntry.z = k.z;
-      liveEntry.headY = (isKneelingPosture ? 1.12 : 1.38) * charScale;
+      liveEntry.headY = (isKneelingPosture ? 1.12 : 1.38) * charScale * attireScale;
     }
   });
 
@@ -1288,6 +1334,15 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
       position={[participant.laneOffset, 0, getActiveEntranceZ()]}
       rotation={[0, Math.PI, 0]}
     >
+      {/* V15: exact detailed 2D illustration in the existing 3D world. */}
+      {/* TINH_TAM_V162_DEFAULT_2D_FEMALE: always use 2D, even for viewers without a selected role */}
+      {(
+        <group ref={portraitRef}>
+          <Suspense fallback={null}>
+            <Temple2DAvatar type={participant.appearance ?? 'nu'} animationRef={avatarMotionRef} />
+          </Suspense>
+        </group>
+      )}
       {/* Grounding Contact Shadow Disc so character rests naturally on the temple floor */}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
@@ -1350,16 +1405,18 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
       {/* Standing/Walking Legs */}
       <mesh
         ref={leftLegRef}
+        visible={false}
         position={[-0.085, 0.22, 0]}
         geometry={SHARED_GEOS.leg}
-        material={TROUSER_MAT}
+        material={costume?.trousers ?? TROUSER_MAT}
         castShadow={castShadows}
       />
       <mesh
         ref={rightLegRef}
+        visible={false}
         position={[0.085, 0.22, 0]}
         geometry={SHARED_GEOS.leg}
-        material={TROUSER_MAT}
+        material={costume?.trousers ?? TROUSER_MAT}
         castShadow={castShadows}
       />
 
@@ -1376,50 +1433,61 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
 
       {/* Upper Articulated Body (Torso + Head + Arms + Ceremonial Props) */}
       <group ref={upperBodyRef} position={[0, 0.44, 0]}>
-        <mesh
+        <mesh visible={false}
           position={[0, 0.26, 0]}
           geometry={SHARED_GEOS.torso}
           material={robeMat}
           castShadow={castShadows}
         />
         {/* Subtle collar and hem preserve the old áo lam silhouette, avoiding toy-like plastic shine. */}
-        <mesh position={[0, 0.6, 0]} geometry={SHARED_GEOS.neck} material={SKIN_MAT} />
-        <mesh position={[0, 0.005, 0]} geometry={SHARED_GEOS.robeHem} material={robeMat} />
-        <mesh
-          position={[0.02, 0.34, 0.175]}
-          rotation={[0, 0, -0.36]}
-          geometry={SHARED_GEOS.collarSash}
-          material={COLLAR_MAT}
-        />
-
-        {/* Head & Hair */}
-        <group position={[0, 0.72, 0]}>
-          <mesh geometry={SHARED_GEOS.head} material={SKIN_MAT} castShadow={castShadows} />
+        <mesh visible={false} position={[0, 0.6, 0]} geometry={SHARED_GEOS.neck} material={costume?.skin ?? SKIN_MAT} />
+        <mesh visible={false} position={[0, 0.005, 0]} geometry={SHARED_GEOS.robeHem} material={robeMat} />
+        {!costume && (
           <mesh
-            position={[0, 0.02, -0.015]}
-            rotation={[-0.18, 0, 0]}
-            geometry={SHARED_GEOS.hairCap}
-            material={HAIR_MAT}
+            position={[0.02, 0.34, 0.175]}
+            rotation={[0, 0, -0.36]}
+            geometry={SHARED_GEOS.collarSash}
+            material={COLLAR_MAT}
           />
-          {participant.hasHairBun && (
+        )}
+        <group visible={false}><TempleSculptedRobe type={participant.appearance} /></group>
+
+        {/* Head & Hair. Monastics are shaved; lay visitors have age-appropriate hairstyles. */}
+        <group position={[0, 0.72, 0]} visible={false}>
+          <mesh geometry={SHARED_GEOS.head} material={costume?.skin ?? SKIN_MAT} castShadow={castShadows} />
+          {!costume?.bald && (
+            <mesh
+              position={[0, 0.02, -0.015]}
+              rotation={[-0.18, 0, 0]}
+              geometry={SHARED_GEOS.hairCap}
+              material={costume?.hair ?? HAIR_MAT}
+            />
+          )}
+          {!costume && participant.hasHairBun && (
             <mesh
               position={[0, 0.15, -0.12]}
               geometry={SHARED_GEOS.hairBun}
-              material={HAIR_MAT}
+              material={costume?.hair ?? HAIR_MAT}
             />
           )}
+          <TempleFaceDetails type={participant.appearance} />
+          <TempleSculptedHead type={participant.appearance} />
         </group>
 
         {/* Left Articulated Arm + Hand */}
-        <group ref={leftArmPivotRef} position={[-0.2, 0.48, 0]}>
+        <group ref={leftArmPivotRef} position={[-0.2, 0.48, 0]} visible={false}>
           <mesh position={[0, -0.15, 0]} geometry={SHARED_GEOS.upperArm} material={robeMat} />
-          <mesh position={[0, -0.32, 0]} geometry={SHARED_GEOS.hand} material={SKIN_MAT} />
+          <TempleSculptedSleeve type={participant.appearance} />
+          <mesh position={[0, -0.32, 0]} geometry={SHARED_GEOS.hand} material={costume?.skin ?? SKIN_MAT} />
         </group>
 
         {/* Right Articulated Arm + Hand + Wooden Drum Mallet (Dùi Gõ Mõ) */}
         <group ref={rightArmPivotRef} position={[0.2, 0.48, 0]}>
+          <group visible={false}>
           <mesh position={[0, -0.15, 0]} geometry={SHARED_GEOS.upperArm} material={robeMat} />
-          <mesh position={[0, -0.32, 0]} geometry={SHARED_GEOS.hand} material={SKIN_MAT} />
+          <TempleSculptedSleeve type={participant.appearance} />
+          <mesh position={[0, -0.32, 0]} geometry={SHARED_GEOS.hand} material={costume?.skin ?? SKIN_MAT} />
+          </group>
           <group
             ref={malletPropRef}
             position={[0, -0.35, 0.1]}

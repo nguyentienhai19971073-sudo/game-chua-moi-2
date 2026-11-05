@@ -3626,6 +3626,76 @@ export function AdminDashboard({
               </label>
             </div>
 
+            {/* TINH_TAM_V1852_LABEL_UI: thông số thay đổi tức thì và được lưu cùng overlay */}
+            <div className="rounded-xl border border-[#d4af37]/35 bg-[#1b0b0e] p-3.5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[#ffe082]">Bảng tên Phật tử (dưới chân)</span>
+                <button type="button" className="text-[11px] text-[#ffe082] hover:underline"
+                  onClick={() => onUpdateOverlaySettings({
+                    ...overlaySettings,
+                    namePlateWidth: 72, namePlateHeight: 22,
+                    namePlateFontSize: 14, namePlateOffsetY: 8,
+                  })}>Mặc định</button>
+              </div>
+              {([
+                { key: 'namePlateWidth' as const, label: 'Chiều rộng', min: 44, max: 160, step: 2, fallback: 72 },
+                { key: 'namePlateHeight' as const, label: 'Chiều cao', min: 16, max: 54, step: 1, fallback: 22 },
+                { key: 'namePlateFontSize' as const, label: 'Cỡ chữ', min: 8, max: 26, step: 1, fallback: 14 },
+                { key: 'namePlateOffsetY' as const, label: 'Hạ bảng tên xuống dưới chân', min: 0, max: 30, step: 1, fallback: 8 },
+              ]).map((control) => (
+                <label key={control.key} className="block space-y-1">
+                  <span className="flex justify-between gap-2 text-[11px] text-[#eadabc]">
+                    <span>{control.label}</span>
+                    <span className="tabular-nums text-[#ffe082]">{overlaySettings[control.key] ?? control.fallback} px</span>
+                  </span>
+                  <input type="range" min={control.min} max={control.max} step={control.step}
+                    value={Math.max(control.min, Math.min(control.max, overlaySettings[control.key] ?? control.fallback))}
+                    onChange={(e) => onUpdateOverlaySettings({ ...overlaySettings, [control.key]: Number(e.target.value) })}
+                    className="w-full accent-[#d4af37]" aria-label={control.label} />
+                </label>
+              ))}
+              <p className="text-[11px] text-[#bba989]">Tên vẫn tối đa 5 ký tự. Nếu sát mép màn hình, hệ thống tự giữ nhãn trong khung.</p>
+            </div>
+
+            <div className="rounded-xl border border-[#d4af37]/35 bg-[#1b0b0e] p-3.5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[#ffe082]">Bong bóng bình luận</span>
+                <button type="button" className="text-[11px] text-[#ffe082] hover:underline"
+                  onClick={() => onUpdateOverlaySettings({
+                    ...overlaySettings,
+                    commentBubbleWidth: 160, commentBubbleHeight: 56,
+                    commentBubbleFontSize: 16, commentBubbleDuration: 12000,
+                  })}>Mặc định</button>
+              </div>
+              {([
+                { key: 'commentBubbleWidth' as const, label: 'Chiều rộng', min: 90, max: 280, step: 5, fallback: 160 },
+                { key: 'commentBubbleHeight' as const, label: 'Chiều cao', min: 36, max: 110, step: 2, fallback: 56 },
+                { key: 'commentBubbleFontSize' as const, label: 'Cỡ chữ', min: 10, max: 28, step: 1, fallback: 16 },
+              ]).map((control) => (
+                <label key={control.key} className="block space-y-1">
+                  <span className="flex justify-between gap-2 text-[11px] text-[#eadabc]">
+                    <span>{control.label}</span>
+                    <span className="tabular-nums text-[#ffe082]">{overlaySettings[control.key] ?? control.fallback} px</span>
+                  </span>
+                  <input type="range" min={control.min} max={control.max} step={control.step}
+                    value={Math.max(control.min, Math.min(control.max, overlaySettings[control.key] ?? control.fallback))}
+                    onChange={(e) => onUpdateOverlaySettings({ ...overlaySettings, [control.key]: Number(e.target.value) })}
+                    className="w-full accent-[#d4af37]" aria-label={control.label} />
+                </label>
+              ))}
+              <label className="block space-y-1">
+                <span className="flex justify-between gap-2 text-[11px] text-[#eadabc]">
+                  <span>Thời gian hiển thị</span>
+                  <span className="tabular-nums text-[#ffe082]">{Math.round((overlaySettings.commentBubbleDuration ?? 12000) / 1000)} giây</span>
+                </span>
+                <input type="range" min={5000} max={30000} step={1000}
+                  value={Math.max(5000, Math.min(30000, overlaySettings.commentBubbleDuration ?? 12000))}
+                  onChange={(e) => onUpdateOverlaySettings({ ...overlaySettings, commentBubbleDuration: Number(e.target.value) })}
+                  className="w-full accent-[#d4af37]" aria-label="Thời gian bong bóng bình luận" />
+              </label>
+              <p className="text-[11px] text-[#bba989]">Kích thước được tính cả trong chống chồng lấn. Giữ nguyên văn bản bình luận và giọng đọc.</p>
+            </div>
+
             <div className="rounded-xl bg-[#1b0b0e] border border-[#d4af37]/25 p-3.5 space-y-1.5 text-[#cbb696]">
               <p className="font-semibold text-[#ffe082]">Mẹo quay OBS Browser Source:</p>
               <p>

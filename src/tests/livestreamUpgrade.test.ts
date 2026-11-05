@@ -636,7 +636,7 @@ runTest('7. Gift narration priority: Large Gift > Normal Gift > Ceremony > Comme
 runTest('8. Increased seat spacing, symmetrical aisles & 9:16 Buddha/seat camera framing', () => {
   assert.ok(COL_SPACING_X >= 1.05, `Horizontal seat spacing increased (${COL_SPACING_X}m)`);
   assert.ok(ROW_SPACING_Z >= 1.4, `Vertical row spacing increased (${ROW_SPACING_Z}m)`);
-  assert.ok(INNER_MAT_X >= 1.65, `Central red carpet kept wide open (inner mat X=${INNER_MAT_X}m)`);
+  assert.ok(INNER_MAT_X >= 1.30, `Narrow central walkway stays clear (inner mat X=${INNER_MAT_X}m)`);
 
   const mats = getAllMainMats();
   assert.equal(mats.length, TOTAL_MAIN_MATS);
@@ -983,9 +983,9 @@ runTest('11. Non-overlapping Center Panel queue, Lotus bursts & Major > Normal >
 });
 
 // ============================================================================
-// 12. ELEVATED BUDDHA POSITION (UNCHANGED SCALE) & EXPANDED 104 FOREGROUND SEATS
+// 12. ELEVATED BUDDHA POSITION & 90 SPACED FOREGROUND SEATS
 // ============================================================================
-runTest('12. Elevated Buddha statue (unchanged 1.82 scale) & expanded 104-seat foreground congregation', () => {
+runTest('12. Elevated Buddha statue (unchanged 1.82 scale) & spacious 90-seat foreground congregation', () => {
   // 1) Buddha scale MUST remain strictly 1.82 (never enlarged or stretched)
   assert.equal(BUDDHA_STATUE_SCALE, 1.82, 'Buddha statue scale must remain strictly unchanged at 1.82');
   assert.ok(BUDDHA_ELEVATION_Y >= 3.5, `Buddha statue raised vertically in 3D scene (y=${BUDDHA_ELEVATION_Y})`);
@@ -999,10 +999,10 @@ runTest('12. Elevated Buddha statue (unchanged 1.82 scale) & expanded 104-seat f
     'BuddhaAltar.tsx preserves exact statue scale and GLTF normalization without enlarging',
   );
 
-  // 2) Expanded foreground seating: 13 rows x 8 cols = 104 symmetrical mats extending near bottom edge
-  assert.equal(MAIN_SEAT_ROWS, 13, 'Expanded to 13 front-to-back rows');
+  // 2) V17: 90 symmetrical mats over 12 rows (3 rows with only 3 columns/side)
+  assert.equal(MAIN_SEAT_ROWS, 10, 'V18.3 uses 10 evenly spaced rows');
   assert.equal(MAIN_SEAT_COLS_PER_SIDE, 4, 'Expanded to 4 columns on each side of the red carpet');
-  assert.equal(TOTAL_MAIN_MATS, 104, '104 primary meditation mats available');
+  assert.equal(TOTAL_MAIN_MATS, 80, '80 primary meditation mats available');
   const frontRowZ = FIRST_ROW_Z + (MAIN_SEAT_ROWS - 1) * ROW_SPACING_Z;
   assert.ok(frontRowZ >= 12.0, `Foreground seating reaches close to camera bottom edge (z=${frontRowZ})`);
 
@@ -1017,7 +1017,7 @@ runTest('12. Elevated Buddha statue (unchanged 1.82 scale) & expanded 104-seat f
   // 4) Verify elevated Buddha fits in upper background of 9:16 frame and never clips ceiling
   const framing = verifyTempleFraming916(1080, 1920);
   assert.equal(framing.buddhaFullyInsideFrame, true, 'Elevated Buddha + halo + lotus throne 100% inside 9:16 frame');
-  assert.equal(framing.allSeatsInsideFrame, true, 'All 104 expanded foreground mats fit inside 9:16 frame');
+  assert.equal(framing.allSeatsInsideFrame, true, 'All 90 expanded foreground mats fit inside 9:16 frame');
   assert.ok(
     framing.buddhaBottomNdcY > 0.03,
     `Elevated Buddha positioned in upper background above screen midline (bottom NDC Y = ${framing.buddhaBottomNdcY.toFixed(3)})`,
@@ -1617,8 +1617,8 @@ runTest('19. Permanent /public/assets/temple-background.png (1080x1920), single-
   );
   assert.equal(
     DEFAULT_SCENE_CALIBRATION.backgroundUrl,
-    '/assets/temple-background.png',
-    'Default backgroundUrl must point to /assets/temple-background.png',
+    '/assets/temple-background-narrow-aisle-v17.png',
+    'Default backgroundUrl must point to narrowed V17 background',
   );
 
   const templeSceneSrc = fs.readFileSync(
@@ -1626,8 +1626,8 @@ runTest('19. Permanent /public/assets/temple-background.png (1080x1920), single-
     'utf8',
   );
   assert.ok(
-    templeSceneSrc.includes('/assets/temple-background.png'),
-    'TempleScene renders /assets/temple-background.png',
+    templeSceneSrc.includes('/assets/temple-background-narrow-aisle-v17.png'),
+    'TempleScene renders the V17 narrow walkway background',
   );
   assert.ok(
     templeSceneSrc.includes('isImageBackgroundMode ?') &&
@@ -1636,12 +1636,12 @@ runTest('19. Permanent /public/assets/temple-background.png (1080x1920), single-
     'TempleScene hides procedural TempleEnvironment and BuddhaAltar in IMAGE BACKGROUND mode while preserving ORIGINAL 3D TEMPLE mode',
   );
 
-  // Verify 9:16 perspective alignment of 104 seats, red carpet rails, altar boundary, and near/far character scaling
+  // Verify 9:16 perspective alignment of 90 seats, narrowed carpet, altar boundary and near/far character scaling
   const framing = verifyImageModeFraming916(DEFAULT_SCENE_CALIBRATION);
   assert.equal(
     framing.allSeatsInside916,
     true,
-    `All 104 calibrated seats must stay strictly inside 9:16 frame (ndcX: ${framing.minSeatNdcX.toFixed(3)}..${framing.maxSeatNdcX.toFixed(3)}, footNdcY max: ${framing.maxSeatFootNdcY.toFixed(3)})`,
+    `All 90 calibrated seats must stay strictly inside 9:16 frame (ndcX: ${framing.minSeatNdcX.toFixed(3)}..${framing.maxSeatNdcX.toFixed(3)}, footNdcY max: ${framing.maxSeatFootNdcY.toFixed(3)})`,
   );
   assert.equal(
     framing.allSeatsClearOfCarpet,
@@ -1671,13 +1671,13 @@ runTest('19. Permanent /public/assets/temple-background.png (1080x1920), single-
     `Characters near bottom scale larger than distant characters near altar (${framing.nearScale.toFixed(2)} > ${framing.farScale.toFixed(2)})`,
   );
 
-  // Verify red carpet perspective rails match painted carpet (~0.25 NDC at altar base widening to ~0.77 at bottom)
+  // Verify V17 narrowed red carpet perspective stays slimmer than the original wide path
   assert.ok(
-    framing.carpetTopAbsNdcX >= 0.21 && framing.carpetTopAbsNdcX <= 0.29,
+    framing.carpetTopAbsNdcX >= 0.06 && framing.carpetTopAbsNdcX <= 0.16,
     `Top of red carpet matches painted altar base width (|ndcX|=${framing.carpetTopAbsNdcX.toFixed(3)})`,
   );
   assert.ok(
-    framing.carpetBottomAbsNdcX >= 0.72 && framing.carpetBottomAbsNdcX <= 0.85,
+    framing.carpetBottomAbsNdcX >= 0.22 && framing.carpetBottomAbsNdcX <= 0.42,
     `Bottom of red carpet matches painted foreground width (|ndcX|=${framing.carpetBottomAbsNdcX.toFixed(3)})`,
   );
 });

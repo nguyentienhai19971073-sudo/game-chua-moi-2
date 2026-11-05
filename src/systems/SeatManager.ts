@@ -25,22 +25,21 @@ export interface AltarStationSpec {
   faceRotY: number;
 }
 
-// Spacious 9:16-calibrated congregation seating expanded toward camera & left/right edges:
-// 13 rows × 4 columns per side = 104 primary mats with generous horizontal (1.12m) & vertical (1.54m)
-// spacing so characters never overlap and have wide 0.96m walking aisles between rows.
-// Participants 105..300+ are stored in lightweight virtual/secondary sanctuary storage and seamlessly
-// walk down the central red carpet when performing ceremonies or promote when seats open.
-export const MAIN_SEAT_ROWS = 13;
+// TINH_TAM_V17_90_SEATS: exactly 90 visible mats on 12 generously spaced rows.
+// Three altar-adjacent rows have 3 seats per side; other nine rows have 4 per side.
+// All rows remain left/right symmetric; anyone beyond 90 waits virtually for a freed seat.
+export const MAIN_SEAT_ROWS = 10; // TINH_TAM_V183_80_GHE_DEU: 10 hàng
 export const MAIN_SEAT_COLS_PER_SIDE = 4;
-export const MAIN_SEATS_PER_ROW = MAIN_SEAT_COLS_PER_SIDE * 2; // 8 symmetrical seats per row
-export const TOTAL_MAIN_MATS = MAIN_SEAT_ROWS * MAIN_SEATS_PER_ROW; // 104 primary visible mats
+export const MAIN_SEATS_PER_ROW = MAIN_SEAT_COLS_PER_SIDE * 2;
+export const REDUCED_ALTAR_ROWS = 0; // TINH_TAM_V183_80_GHE_DEU: đủ 4 ghế mỗi cánh ở tất cả hàng
+export const TOTAL_MAIN_MATS = MAIN_SEAT_ROWS * MAIN_SEATS_PER_ROW - REDUCED_ALTAR_ROWS * 2; // 80 = 40 mỗi bên
 
 export const ENTRANCE_Z = 16.8;
 export const ALTAR_CENTER_Z = -12.4;
 export const FIRST_ROW_Z = -6.1;
-export const ROW_SPACING_Z = 1.54; // Wide 1.54m row pitch -> 0.96m clear walking aisle between 0.58m mats; front row reaches z = +12.38 near bottom of 9:16!
-export const INNER_MAT_X = 1.72; // Keeps central red carpet (|x| <= 1.24) completely clear
-export const COL_SPACING_X = 1.12; // Wide 1.12m column pitch -> columns at |x| = 1.72, 2.84, 3.96, 5.08 extending cleanly toward left/right edges
+export const ROW_SPACING_Z = 2.12; // TINH_TAM_V183_80_GHE_DEU: 3D gốc phủ đều chiều sâu // 19.03m over 12 rows: larger distance between worshippers
+export const INNER_MAT_X = 1.40; // Leave a slim, clear central passage between expanded seating wings
+export const COL_SPACING_X = 1.20; // More horizontal space than the previous 1.12m
 
 // Exact preserved scale of the Golden Buddha Statue & Lotus Throne (NEVER enlarged or stretched!)
 export const BUDDHA_STATUE_SCALE = 1.82;
@@ -92,7 +91,8 @@ export function getActiveAltarStation(id: AltarStationId): AltarStationSpec {
 
 export function getActiveEntranceZ(): number {
   const cal = getActiveSceneCalibration();
-  return cal.sceneMode === 'image_background' ? cal.entranceZ : ENTRANCE_Z;
+  // TINH_TAM_V172_BUDDHA_TOP_THIRD: entrants begin just beyond the foreground mats.
+  return cal.sceneMode === 'image_background' ? Math.max(19.30, cal.entranceZ) : ENTRANCE_Z;
 }
 
 export function getActiveCarpetLanes(
@@ -109,9 +109,9 @@ export function getActiveCarpetLanes(
     return getImageCalibratedCarpetLanes(side, isXinXam);
   }
   return {
-    outboundLaneX: isXinXam ? -0.44 : side === 'left' ? -0.38 : 0.38,
-    returnLaneX: side === 'left' ? -0.84 : 0.84,
-    exitLaneX: side === 'left' ? -0.66 : 0.66,
+    outboundLaneX: isXinXam ? -0.25 : side === 'left' ? -0.28 : 0.28,
+    returnLaneX: side === 'left' ? -0.52 : 0.52,
+    exitLaneX: side === 'left' ? -0.44 : 0.44,
     altarApproachThresholdZ: -6.9,
   };
 }
@@ -174,18 +174,24 @@ function computeSeatPosition(seatIndex: number): SeatPosition {
   const isOverflow = seatIndex >= TOTAL_MAIN_MATS;
 
   if (!isOverflow) {
-    const row = Math.floor(seatIndex / MAIN_SEATS_PER_ROW);
-    const slotInRow = seatIndex % MAIN_SEATS_PER_ROW;
+    const reducedRowSeats = MAIN_SEATS_PER_ROW - 2;
+    const altarZoneCapacity = REDUCED_ALTAR_ROWS * reducedRowSeats;
+    const row = seatIndex < altarZoneCapacity
+      ? Math.floor(seatIndex / reducedRowSeats)
+      : REDUCED_ALTAR_ROWS + Math.floor((seatIndex - altarZoneCapacity) / MAIN_SEATS_PER_ROW);
+    const slotInRow = seatIndex < altarZoneCapacity
+      ? seatIndex % reducedRowSeats
+      : (seatIndex - altarZoneCapacity) % MAIN_SEATS_PER_ROW;
 
-    // Symmetrical left/right filling outward from the central red carpet
+    // Symmetrical left/right filling outward from the narrow central passage
     const side: 'left' | 'right' = slotInRow % 2 === 0 ? 'left' : 'right';
-    const depthFromCarpet = Math.floor(slotInRow / 2); // 0..3
+    const depthFromCarpet = Math.floor(slotInRow / 2); // 0..2 (altar rows), 0..3 otherwise
     const col = side === 'left' ? depthFromCarpet : MAIN_SEAT_COLS_PER_SIDE + depthFromCarpet;
 
-    const absX = INNER_MAT_X + depthFromCarpet * COL_SPACING_X; // 1.72, 2.84, 3.96, 5.08
+    const absX = INNER_MAT_X + depthFromCarpet * COL_SPACING_X;
     const x = side === 'left' ? -absX : absX;
-    const z = FIRST_ROW_Z + row * ROW_SPACING_Z; // -6.10 .. +12.38
-    const aisleZ = z + 0.72; // Centered in the wide 0.96m walking corridor between rows
+    const z = FIRST_ROW_Z + row * ROW_SPACING_Z; // -6.10 .. +12.93
+    const aisleZ = z + 0.78; // Clear walking gap between 0.58m cushions
 
     return {
       seatIndex,
@@ -226,7 +232,7 @@ function computeSeatPosition(seatIndex: number): SeatPosition {
   };
 }
 
-// Precompute all 104 main mats + 256 virtual overflow slots (supports 360 cached + unlimited dynamic)
+// Precompute 90 visible mats + 270 virtual overflow slots (supports 360 cached + unlimited dynamic)
 const PRECOMPUTED_SEATS: SeatPosition[] = Array.from({ length: 360 }, (_, i) =>
   computeSeatPosition(i),
 );
@@ -261,7 +267,7 @@ export function getSeatPosition(seatIndex: number, forceMode?: TempleSceneMode):
 
 /**
  * Calibrates a PerspectiveCamera for 9:16 portrait or 16:9 landscape so:
- * 1) Every single primary seat (0..103) + character silhouette fits strictly inside the frame,
+ * 1) Every single primary seat (0..89) + character silhouette fits strictly inside the frame,
  *    with front rows extending near the bottom edge and outer columns near left/right edges.
  * 2) The elevated Golden Buddha Statue (crown y=14.92 down to lotus pedestal y=3.88) sits higher
  *    in the upper background at its exact original visual size without distortion.
@@ -333,7 +339,7 @@ export function verifyTempleFraming916(width = 1080, height = 1920): FramingVeri
   let centralCarpetClear = true;
 
   for (const seat of mats) {
-    if (Math.abs(seat.x) - 0.34 < 1.24) {
+    if (Math.abs(seat.x) - 0.34 < 1.03) {
       centralCarpetClear = false;
     }
 
@@ -424,7 +430,7 @@ export class SeatManager {
   private laneCounter = 0;
 
   // Lanes along the red carpet so multiple walking worshippers never overlap
-  private static readonly CARPET_LANES = [-0.52, 0.52, -0.26, 0.26, 0, -0.76, 0.76];
+  private static readonly CARPET_LANES = [-0.46, 0.46, -0.24, 0.24, 0, -0.56, 0.56];
 
   public assignSeatForUser(userId: string): { seatIndex: number; laneOffset: number } {
     const existing = this.userToSeat.get(userId);
