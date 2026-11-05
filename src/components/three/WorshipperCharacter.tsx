@@ -1467,7 +1467,7 @@ export function WorshipperCharacter({ participant, castShadows }: WorshipperChar
             <mesh
               position={[0, 0.15, -0.12]}
               geometry={SHARED_GEOS.hairBun}
-              material={costume?.hair ?? HAIR_MAT}
+              material={HAIR_MAT}
             />
           )}
           <TempleFaceDetails type={participant.appearance} />
